@@ -1,0 +1,24 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.adminIndexRouter = void 0;
+const express_1 = require("express");
+const dashboard_routes_1 = require("./dashboard.routes");
+const users_routes_1 = require("./users.routes");
+const farmers_routes_1 = require("./farmers.routes");
+const buyers_routes_1 = require("./buyers.routes");
+const products_routes_1 = require("./products.routes");
+const orders_routes_1 = require("./orders.routes");
+const shipments_routes_1 = require("./shipments.routes");
+const payments_routes_1 = require("./payments.routes");
+const statistics_routes_1 = require("./statistics.routes");
+exports.adminIndexRouter = (0, express_1.Router)();
+exports.adminIndexRouter.use("/dashboard", dashboard_routes_1.adminDashboardRouter);
+exports.adminIndexRouter.use("/users", users_routes_1.adminUsersRouter);
+exports.adminIndexRouter.use("/farmers", farmers_routes_1.adminFarmersRouter);
+exports.adminIndexRouter.use("/buyers", buyers_routes_1.adminBuyersRouter);
+exports.adminIndexRouter.use("/products", products_routes_1.adminProductsRouter);
+exports.adminIndexRouter.use("/orders", orders_routes_1.adminOrdersRouter);
+exports.adminIndexRouter.use("/shipments", shipments_routes_1.adminShipmentsRouter);
+exports.adminIndexRouter.use("/payments", payments_routes_1.adminPaymentsRouter);
+exports.adminIndexRouter.use("/statistics", statistics_routes_1.adminStatisticsRouter);
+//# sourceMappingURL=index.js.map

@@ -1,0 +1,725 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+
+
+// =========================
+// Enums
+// =========================
+
+enum UserRole {
+  FARMER
+  BUYER
+  ADMIN
+}
+
+enum ProfileStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING
+}
+
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+  SOLD_OUT
+  DRAFT
+}
+
+enum OrderStatus {
+  CREATED
+  CONFIRMED
+  CANCELLED
+  FULFILLING
+  SHIPPED
+  DELIVERED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  CANCELLED
+  PAID
+}
+
+
+enum PaymentStatus {
+  PENDING
+  AUTHORIZED
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CARD
+  BANK_TRANSFER
+  CASH_ON_DELIVERY
+  WALLET
+}
+
+enum DeliveryMethod {
+  AIR
+  FLIGHT
+}
+
+enum ShipmentGroupStatus {
+  PENDING
+  PACKED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum ShipmentItemStatus {
+  PENDING
+  RESERVED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum OTPPurpose {
+  LOGIN
+  SIGNUP
+  PASSWORD_RESET
+  PHONE_VERIFICATION
+}
+
+enum OTPChannel {
+  EMAIL
+  SMS
+}
+
+enum OTPStatus {
+  ACTIVE
+  CONSUMED
+  EXPIRED
+  REVOKED
+}
+
+enum MarketPriceSource {
+  USER_REPORTED
+  FEED
+  MANUAL_ENTRY
+  EXTERNAL_PROVIDER
+}
+
+enum PredictionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+enum NotificationType {
+  CART_ITEM_ADDED
+  PAYMENT_SENT
+  ORDER_PLACED
+  PAYMENT_RECEIVED
+  ORDER_ACCEPTED
+  ORDER_PACKED
+  ORDER_SHIPPED
+  ORDER_DELIVERED
+  ORDER_REJECTED
+  RECEIPT_CONFIRMED
+  ESCROW_RELEASED
+  WITHDRAWAL_REQUESTED
+}
+
+enum WalletTransactionType {
+  ESCROW_HOLD
+  ESCROW_RELEASE
+  ESCROW_REVERSAL
+  WITHDRAWAL
+}
+
+enum WithdrawalStatus {
+  PENDING
+  PAID
+  REJECTED
+}
+
+// =========================
+// Models
+// =========================
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  phone     String?  @unique
+  passwordHash String
+
+  role      UserRole @default(BUYER)
+  status    ProfileStatus @default(ACTIVE)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  farmerProfile FarmerProfile?
+  buyerProfile  BuyerProfile?
+  otps          OTP[]
+  refreshTokens RefreshToken[]
+  notifications Notification[]
+
+
+  @@index([role])
+  @@index([status])
+}
+
+model FarmerProfile {
+  id        String @id @default(uuid())
+
+  userId    String @unique
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  displayName String
+  status       ProfileStatus @default(ACTIVE)
+
+  farmName     String?
+  location     String?
+
+  // ImageKit-managed profile image (profileImagePublicId stores the ImageKit fileId)
+  profileImageUrl      String?
+  profileImagePublicId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products Product[]
+  shipmentShippingAllocations ShipmentShippingAllocation[]
+  wallet   Wallet?
+
+  @@index([status])
+  @@index([location])
+}
+
+
+
+model BuyerProfile {
+  id        String @id @default(uuid())
+
+  userId    String @unique
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  displayName String
+  status       ProfileStatus @default(ACTIVE)
+
+  // ImageKit-managed profile image (profileImagePublicId stores the ImageKit fileId)
+  profileImageUrl      String?
+  profileImagePublicId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orders           Order[]
+  wishlistItems   WishlistItem[]
+  savedProducts   SavedProduct[]
+
+  @@index([status])
+}
+
+model WishlistItem {
+  id String @id @default(uuid())
+
+  buyerProfileId String
+  buyerProfile   BuyerProfile @relation(fields: [buyerProfileId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([buyerProfileId, productId])
+  @@index([buyerProfileId])
+  @@index([productId])
+}
+
+model SavedProduct {
+  id String @id @default(uuid())
+
+  buyerProfileId String
+  buyerProfile   BuyerProfile @relation(fields: [buyerProfileId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([buyerProfileId, productId])
+  @@index([buyerProfileId])
+  @@index([productId])
+}
+
+
+enum ProductType {
+  CROP
+  LIVESTOCK
+  GRAIN
+  FRUIT
+  VEGETABLE
+  OTHER
+}
+
+enum RestrictedProductType {
+  YAM
+  SWEET_POTATO
+  CASSAVA
+  WATER_YAM
+}
+
+model Product {
+  id          String @id @default(uuid())
+
+  farmerProfileId String
+  farmerProfile   FarmerProfile @relation(fields: [farmerProfileId], references: [id], onDelete: Restrict)
+
+  // Restricted to non-perishable tubers: Yam / Sweet Potato / Cassava / Water Yam
+  productName RestrictedProductType
+
+  // Optional SKU (kept for future use)
+  sku         String? @unique
+
+  // Admin visibility/workflow
+  status      ProductStatus @default(DRAFT)
+
+  // Fields
+  quantityKg       Decimal @db.Decimal(18, 3)
+  quantityTonnes   Decimal @db.Decimal(18, 6)
+  unit             String @default("kg")
+
+  pricePerKg      Decimal @db.Decimal(18, 2)
+  totalValue      Decimal @db.Decimal(18, 2)
+
+  images          String[]
+  description     String?
+
+  location            String?
+  destinationCountry  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Keep legacy relations
+  shipmentItems ShipmentItem[]
+  marketPrices  MarketPrice[]
+  predictions   Prediction[]
+
+  wishlistItems WishlistItem[]
+  savedBy        SavedProduct[]
+
+  @@index([farmerProfileId])
+  @@index([status])
+  @@index([productName])
+}
+
+
+model Order {
+  id        String @id @default(uuid())
+
+  buyerProfileId String
+  buyerProfile   BuyerProfile @relation(fields: [buyerProfileId], references: [id], onDelete: Restrict)
+
+  status    OrderStatus @default(CREATED)
+  deliveryMethod DeliveryMethod @default(AIR)
+
+  // Pricing snapshot for the whole order
+  currency  String @default("USD")
+  subtotalAmount Decimal @db.Decimal(18, 2) @default(0)
+  taxAmount      Decimal @db.Decimal(18, 2) @default(0)
+  shippingAmount Decimal @db.Decimal(18, 2) @default(0)
+  totalAmount    Decimal @db.Decimal(18, 2) @default(0)
+
+  notes     String?
+
+  // Buyer's confirmation that goods were received. Drives escrow release and
+  // guards against double-releasing funds (idempotency).
+  receiptConfirmedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  shipmentGroups ShipmentGroup[]
+  payments Payment[]
+  invoices  Invoice[]
+
+  @@index([buyerProfileId])
+  @@index([status])
+}
+
+
+model ShipmentGroup {
+  id        String @id @default(uuid())
+
+  // Nullable to support “open”/pre-order shipment consolidation created during farmer uploads.
+  orderId   String?
+  order     Order? @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  status    ShipmentGroupStatus @default(PENDING)
+
+
+  // Consolidated shipment destination
+  // Kept optional to avoid breaking existing order creation flow (buyer doesn't provide country in MVP).
+  destinationCountry String?
+
+  // Shipping cost for this consolidated shipment
+  shippingCostAmount Decimal @db.Decimal(18, 2) @default(0)
+  shippingCurrency    String @default("NGN")
+
+  // LCL capacity tracking (snapshot)
+  currentWeightKg  Decimal @db.Decimal(18, 3) @default(0)
+  maximumWeightKg  Decimal @db.Decimal(18, 3) @default(0)
+  remainingWeightKg Decimal @db.Decimal(18, 3) @default(0)
+
+  // When this consolidated shipment should depart.
+  // Business rule will set this at shipment allocation time.
+  departureDate DateTime @default(now())
+
+  // Shipping destination snapshot
+  destinationName  String?
+  destinationAddress String?
+  destinationPhone String?
+
+
+  trackingNumber   String? @unique
+
+  carrier   String?
+  shippedAt DateTime?
+  deliveredAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items ShipmentItem[]
+  shippingAllocations ShipmentShippingAllocation[]
+
+  @@index([orderId])
+  @@index([status])
+}
+
+model ShipmentShippingAllocation {
+  id String @id @default(uuid())
+
+  shipmentGroupId String
+  shipmentGroup   ShipmentGroup @relation(fields: [shipmentGroupId], references: [id], onDelete: Cascade)
+
+  farmerProfileId String
+  farmerProfile   FarmerProfile @relation(fields: [farmerProfileId], references: [id], onDelete: Restrict)
+
+  // Farmer's contribution in kg for this shipment group
+  weightContributionKg Decimal @db.Decimal(18, 3)
+
+  shippingPercentage Decimal @db.Decimal(18, 10) @default(0)
+  shippingAmount     Decimal @db.Decimal(18, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([shipmentGroupId])
+  @@index([farmerProfileId])
+  @@unique([shipmentGroupId, farmerProfileId])
+}
+
+model ShipmentItem {
+  id        String @id @default(uuid())
+
+  shipmentGroupId String
+  shipmentGroup   ShipmentGroup @relation(fields: [shipmentGroupId], references: [id], onDelete: Cascade)
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  // Quantity shipped for this item
+  quantity Decimal @db.Decimal(18, 3)
+  unit     String @default("kg")
+
+  // Price snapshot per item
+  currency String @default("USD")
+  unitPrice Decimal @db.Decimal(18, 2)
+  lineTotal Decimal @db.Decimal(18, 2)
+
+  status ShipmentItemStatus @default(PENDING)
+
+  reservedAt DateTime?
+  shippedAt DateTime?
+  deliveredAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([shipmentGroupId])
+  @@index([productId])
+  @@index([status])
+}
+
+model Payment {
+  id        String @id @default(uuid())
+
+  orderId   String
+  order     Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  status    PaymentStatus @default(PENDING)
+  method    PaymentMethod
+
+  currency  String @default("USD")
+  amount    Decimal @db.Decimal(18, 2)
+
+  // Provider references
+  provider   String?
+  providerPaymentId String? @unique
+
+  authorizedAt DateTime?
+  paidAt       DateTime?
+  failedAt     DateTime?
+  refundedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([status])
+  @@index([method])
+}
+
+model Invoice {
+  id        String @id @default(uuid())
+
+  orderId   String
+  order     Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  status    InvoiceStatus @default(DRAFT)
+
+  currency      String @default("USD")
+  subtotalAmount Decimal @db.Decimal(18, 2) @default(0)
+  taxAmount      Decimal @db.Decimal(18, 2) @default(0)
+  shippingAmount Decimal @db.Decimal(18, 2) @default(0)
+  totalAmount    Decimal @db.Decimal(18, 2) @default(0)
+
+  // Simple JSON payload of invoice content (no PDF generation in this backend MVP)
+  payload Json
+
+  issuedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([orderId])
+  @@index([status])
+}
+
+model MarketPrice {
+
+  id        String @id @default(uuid())
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  source    MarketPriceSource @default(MANUAL_ENTRY)
+
+  // Time series price point
+  recordedAt DateTime
+
+  currency   String @default("USD")
+  price      Decimal @db.Decimal(18, 2)
+
+  // Optional extra metadata
+  region     String?
+  quality     String?
+  notes       String?
+
+  createdAt  DateTime @default(now())
+
+  @@index([productId, recordedAt(sort: Desc)])
+  @@index([source])
+  @@unique([productId, recordedAt])
+}
+
+model Prediction {
+  id        String @id @default(uuid())
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  status    PredictionStatus @default(PENDING)
+
+  // When the model was run / generated
+  generatedAt DateTime @default(now())
+
+  // The horizon or target date of the prediction
+  targetDate DateTime
+
+  currency   String @default("USD")
+
+  // Predicted market price
+  predictedPrice Decimal @db.Decimal(18, 2)
+
+  // Optional model metadata
+  modelName  String?
+  version    String?
+  confidence Decimal? @db.Decimal(5, 4) // 0..1
+
+  createdAt DateTime @default(now())
+
+  @@index([productId, targetDate(sort: Desc)])
+  @@index([status])
+  @@unique([productId, targetDate])
+}
+
+model OTP {
+  id        String @id @default(uuid())
+
+  userId    String
+  user      User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  purpose   OTPPurpose
+  channel   OTPChannel
+
+  tokenHash String @unique
+
+  status    OTPStatus @default(ACTIVE)
+
+  // Expiry
+  expiresAt DateTime
+  consumedAt DateTime?
+
+  // Attempts metadata
+  attempts Int @default(0)
+  lastAttemptAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([purpose])
+  @@index([channel])
+  @@index([expiresAt])
+}
+
+model RefreshToken {
+  id String @id @default(uuid())
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Hash of the raw refresh JWT
+  tokenHash String @unique
+
+  revokedAt DateTime?
+  expiresAt DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([revokedAt])
+  @@index([expiresAt])
+}
+
+// =========================
+// Notifications & Wallet (escrow)
+// =========================
+
+model Notification {
+  id        String   @id @default(uuid())
+
+  // Recipient user (buyer or farmer). Notifications are keyed on User.id so a
+  // single controller can serve both roles from req.user.id.
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type      NotificationType
+  title     String
+  body      String
+
+  // Optional linkage back to the order this notification is about.
+  orderId   String?
+
+  // Free-form structured payload for the client (amounts, product names, etc.).
+  data      Json?
+
+  // Null until the recipient marks it read.
+  readAt    DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, readAt])
+}
+
+model Wallet {
+  id              String @id @default(uuid())
+
+  farmerProfileId String        @unique
+  farmerProfile   FarmerProfile @relation(fields: [farmerProfileId], references: [id], onDelete: Cascade)
+
+  currency         String  @default("USD")
+
+  // Withdrawable funds (released from escrow).
+  availableBalance Decimal @db.Decimal(18, 2) @default(0)
+  // Funds held in escrow until the buyer confirms receipt.
+  escrowBalance    Decimal @db.Decimal(18, 2) @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  transactions WalletTransaction[]
+  withdrawals  WalletWithdrawal[]
+
+  @@index([farmerProfileId])
+}
+
+model WalletTransaction {
+  id       String @id @default(uuid())
+
+  walletId String
+  wallet   Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  type     WalletTransactionType
+  amount   Decimal @db.Decimal(18, 2)
+  currency String  @default("USD")
+
+  // Order this movement relates to (null for withdrawals). Used to match a
+  // release/reversal to its originating escrow hold.
+  orderId  String?
+  note     String?
+
+  // Balance snapshots after this transaction was applied (audit trail).
+  availableBalanceAfter Decimal @db.Decimal(18, 2)
+  escrowBalanceAfter    Decimal @db.Decimal(18, 2)
+
+  createdAt DateTime @default(now())
+
+  @@index([walletId, createdAt(sort: Desc)])
+  @@index([orderId])
+  @@index([type])
+}
+
+model WalletWithdrawal {
+  id       String @id @default(uuid())
+
+  walletId String
+  wallet   Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  amount   Decimal @db.Decimal(18, 2)
+  currency String  @default("USD")
+
+  status   WithdrawalStatus @default(PENDING)
+
+  requestedAt DateTime  @default(now())
+  processedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([walletId, createdAt(sort: Desc)])
+  @@index([status])
+}
+
+
+
