@@ -2,6 +2,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.orderRepository = void 0;
 const client_1 = require("../prisma/client");
+const dhlService_1 = require("../services/dhlService");
+const walletRepository_1 = require("./walletRepository");
 exports.orderRepository = {
     async requireBuyerProfileByUserId(userId) {
         const profile = await client_1.prisma.buyerProfile.findUnique({ where: { userId } });
@@ -32,7 +34,7 @@ exports.orderRepository = {
         const productIds = params.items.map((i) => i.productId);
         const existing = await client_1.prisma.product.findMany({
             where: { id: { in: productIds } },
-            select: { id: true },
+            select: { id: true, farmerProfile: { select: { userId: true } } },
         });
         const existingSet = new Set(existing.map((p) => p.id));
         const missing = productIds.filter((id) => !existingSet.has(id));
@@ -41,17 +43,22 @@ exports.orderRepository = {
             err.status = 400;
             throw err;
         }
+        // Distinct farmer user IDs owning products in this order (for notifications).
+        const farmerUserIds = Array.from(new Set(existing
+            .map((p) => p.farmerProfile?.userId)
+            .filter((id) => Boolean(id))));
         return client_1.prisma.$transaction(async (tx) => {
             const order = await tx.order.create({
                 data: {
                     buyerProfileId: params.buyerProfileId,
                     currency: params.currency,
                     notes: params.notes ?? null,
+                    deliveryMethod: params.deliveryMethod ?? "AIR",
                     subtotalAmount: subtotal,
                     taxAmount: tax,
                     shippingAmount: shipping,
                     totalAmount: total,
-                    status: "PENDING",
+                    status: "CREATED",
                 },
             });
             const shipmentGroup = await tx.shipmentGroup.create({
@@ -63,6 +70,8 @@ exports.orderRepository = {
                     destinationPhone: params.destinationPhone ?? null,
                     shippingCostAmount: shipping,
                     shippingCurrency: params.currency ?? "NGN",
+                    carrier: "DHL",
+                    trackingNumber: dhlService_1.dhlService.generateTrackingNumber(),
                     // Capacity tracking fields are populated during farmer-upload consolidation.
                     // For order-created shipment groups, keep them at 0.
                     currentWeightKg: 0,
@@ -133,17 +142,21 @@ exports.orderRepository = {
                 order,
                 shipmentGroup,
                 invoice,
+                farmerUserIds,
             };
-        });
+        }, { maxWait: 10000, timeout: 20000 });
     },
     async acceptOrderTx(params) {
         return client_1.prisma.$transaction(async (tx) => {
             const order = await tx.order.findFirst({
                 where: { id: params.orderId },
                 include: {
+                    buyerProfile: { select: { userId: true } },
                     shipmentGroups: {
                         include: {
-                            items: true,
+                            items: {
+                                include: { product: { select: { farmerProfileId: true } } },
+                            },
                         },
                     },
                 },
@@ -153,22 +166,17 @@ exports.orderRepository = {
                 err.status = 404;
                 throw err;
             }
-            if (order.status !== "PENDING") {
+            if (order.status !== "CREATED") {
                 const err = new Error("Order cannot be accepted from current state");
                 err.status = 409;
                 throw err;
             }
-            const farmerItemsCount = await tx.shipmentItem.count({
-                where: {
-                    shipmentGroup: { orderId: params.orderId },
-                    product: { farmerProfileId: params.farmerProfileId },
-                },
-            });
-            const totalItemsCount = await tx.shipmentItem.count({
-                where: {
-                    shipmentGroup: { orderId: params.orderId },
-                },
-            });
+            // Compute item ownership from the already-fetched items instead of
+            // issuing extra count queries. Fewer round-trips keeps this interactive
+            // transaction comfortably under its timeout on a remote (Neon) database.
+            const allItems = order.shipmentGroups.flatMap((g) => g.items);
+            const totalItemsCount = allItems.length;
+            const farmerItemsCount = allItems.filter((it) => it.product?.farmerProfileId === params.farmerProfileId).length;
             if (totalItemsCount === 0 || farmerItemsCount !== totalItemsCount) {
                 const err = new Error("Farmer cannot accept this order");
                 err.status = 403;
@@ -176,15 +184,26 @@ exports.orderRepository = {
             }
             const updatedOrder = await tx.order.update({
                 where: { id: params.orderId },
-                data: { status: "ACCEPTED" },
+                data: { status: "CONFIRMED" },
             });
-            await tx.shipmentGroup.updateMany({
+            const shipmentGroupRows = await tx.shipmentGroup.findMany({
                 where: { orderId: params.orderId },
-                data: { status: "PROCESSING" },
+                select: { id: true, trackingNumber: true, carrier: true, status: true },
             });
+            for (const shipmentGroupRow of shipmentGroupRows) {
+                await tx.shipmentGroup.update({
+                    where: { id: shipmentGroupRow.id },
+                    data: {
+                        status: "PACKED",
+                        carrier: shipmentGroupRow.carrier ?? "DHL",
+                        trackingNumber: shipmentGroupRow.trackingNumber ?? dhlService_1.dhlService.generateTrackingNumber(),
+                        shippedAt: shipmentGroupRow.shippedAt ?? null,
+                    },
+                });
+            }
             await tx.shipmentItem.updateMany({
                 where: { shipmentGroup: { orderId: params.orderId } },
-                data: { status: "PROCESSING" },
+                data: { status: "RESERVED" },
             });
             const invoice = await tx.invoice.findFirst({
                 where: { orderId: params.orderId },
@@ -201,18 +220,90 @@ exports.orderRepository = {
                     issuedAt: new Date(),
                 },
             });
-            return { order: updatedOrder, invoice: issuedInvoice };
-        });
+            return { order: updatedOrder, invoice: issuedInvoice, buyerUserId: order.buyerProfile?.userId };
+        }, { maxWait: 10000, timeout: 20000 });
     },
-    async rejectOrderTx(params) {
+    async advanceShipmentStatusTx(params) {
         return client_1.prisma.$transaction(async (tx) => {
-            const order = await tx.order.findFirst({ where: { id: params.orderId } });
+            const order = await tx.order.findFirst({
+                where: { id: params.orderId },
+                include: {
+                    buyerProfile: { select: { userId: true } },
+                    shipmentGroups: {
+                        include: {
+                            items: {
+                                include: { product: { select: { farmerProfileId: true } } },
+                            },
+                        },
+                    },
+                },
+            });
             if (!order) {
                 const err = new Error("Order not found");
                 err.status = 404;
                 throw err;
             }
-            if (order.status !== "PENDING") {
+            const allItems = order.shipmentGroups.flatMap((g) => g.items ?? []);
+            const farmerItemsCount = allItems.filter((it) => it.product?.farmerProfileId === params.farmerProfileId).length;
+            if (allItems.length === 0 || farmerItemsCount !== allItems.length) {
+                const err = new Error("Farmer cannot update this shipment status");
+                err.status = 403;
+                throw err;
+            }
+            const shipmentStatusOrder = ["PENDING", "PACKED", "SHIPPED", "DELIVERED"];
+            const currentShipmentStatus = order.shipmentGroups.find((g) => g.status === "DELIVERED")?.status ??
+                order.shipmentGroups.find((g) => g.status === "SHIPPED")?.status ??
+                order.shipmentGroups.find((g) => g.status === "PACKED")?.status ??
+                "PENDING";
+            const currentIndex = shipmentStatusOrder.indexOf(currentShipmentStatus);
+            const targetIndex = shipmentStatusOrder.indexOf(params.status);
+            if (currentIndex === -1 || targetIndex === -1 || targetIndex < currentIndex) {
+                const err = new Error("Shipment status cannot be advanced in that order");
+                err.status = 409;
+                throw err;
+            }
+            const orderStatusByShipmentStatus = {
+                PACKED: "CONFIRMED",
+                SHIPPED: "SHIPPED",
+                DELIVERED: "DELIVERED",
+            };
+            await tx.order.update({
+                where: { id: params.orderId },
+                data: {
+                    status: orderStatusByShipmentStatus[params.status] ?? order.status,
+                },
+            });
+            await tx.shipmentGroup.updateMany({
+                where: { orderId: params.orderId },
+                data: {
+                    status: params.status,
+                    shippedAt: params.status === "SHIPPED" ? new Date() : undefined,
+                    deliveredAt: params.status === "DELIVERED" ? new Date() : undefined,
+                },
+            });
+            await tx.shipmentItem.updateMany({
+                where: { shipmentGroup: { orderId: params.orderId } },
+                data: {
+                    status: params.status === "DELIVERED" ? "DELIVERED" : params.status === "SHIPPED" ? "SHIPPED" : "RESERVED",
+                    shippedAt: params.status === "SHIPPED" ? new Date() : undefined,
+                    deliveredAt: params.status === "DELIVERED" ? new Date() : undefined,
+                },
+            });
+            return { ok: true, status: params.status, buyerUserId: order.buyerProfile?.userId };
+        }, { maxWait: 10000, timeout: 20000 });
+    },
+    async rejectOrderTx(params) {
+        return client_1.prisma.$transaction(async (tx) => {
+            const order = await tx.order.findFirst({
+                where: { id: params.orderId },
+                include: { buyerProfile: { select: { userId: true } } },
+            });
+            if (!order) {
+                const err = new Error("Order not found");
+                err.status = 404;
+                throw err;
+            }
+            if (order.status !== "CREATED") {
                 const err = new Error("Order cannot be rejected from current state");
                 err.status = 409;
                 throw err;
@@ -244,8 +335,43 @@ exports.orderRepository = {
                 where: { orderId: params.orderId },
                 data: { status: "CANCELLED" },
             });
-            return { ok: true };
-        });
+            // If the buyer had already paid, reverse the escrow hold(s) for this order.
+            const reversals = await walletRepository_1.walletRepository.reverseEscrowForOrder(tx, {
+                orderId: params.orderId,
+            });
+            return { ok: true, buyerUserId: order.buyerProfile?.userId, reversals };
+        }, { maxWait: 10000, timeout: 20000 });
+    },
+    // Buyer confirms they received the goods. Requires the order to be DELIVERED,
+    // then releases the farmer(s) escrow into available balance. Idempotent via
+    // Order.receiptConfirmedAt.
+    async confirmReceiptTx(params) {
+        return client_1.prisma.$transaction(async (tx) => {
+            const order = await tx.order.findFirst({
+                where: { id: params.orderId, buyerProfileId: params.buyerProfileId },
+                select: { id: true, status: true, receiptConfirmedAt: true },
+            });
+            if (!order) {
+                const err = new Error("Order not found");
+                err.status = 404;
+                throw err;
+            }
+            // Already confirmed — no-op (don't release twice).
+            if (order.receiptConfirmedAt) {
+                return { alreadyConfirmed: true, released: [] };
+            }
+            if (order.status !== "DELIVERED") {
+                const err = new Error("Order must be delivered before confirming receipt");
+                err.status = 409;
+                throw err;
+            }
+            await tx.order.update({
+                where: { id: order.id },
+                data: { receiptConfirmedAt: new Date() },
+            });
+            const released = await walletRepository_1.walletRepository.releaseEscrowForOrder(tx, { orderId: order.id });
+            return { alreadyConfirmed: false, released };
+        }, { maxWait: 10000, timeout: 20000 });
     },
     async getBuyerOrderForResponse(params) {
         const order = await client_1.prisma.order.findFirst({

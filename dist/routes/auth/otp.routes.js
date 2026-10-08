@@ -35,9 +35,10 @@ exports.otpRouter.post("/verify", async (req, res, next) => {
             purpose: body.purpose,
             otp: body.otp,
         });
-        // Signup OTP => activate user
-        if (body.purpose === "SIGNUP") {
-            await otpService_1.otpService.activateUserAfterSignupOtp({ email: body.email });
+        // SIGNUP and LOGIN OTPs both gate a PENDING account; verifying either
+        // flips it ACTIVE (no-op if already active).
+        if (body.purpose === "SIGNUP" || body.purpose === "LOGIN") {
+            await otpService_1.otpService.activatePendingUser({ email: body.email });
         }
         res.json({ ok: true, ...result });
     }

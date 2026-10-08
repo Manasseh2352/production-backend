@@ -78,7 +78,7 @@ exports.otpService = {
         await otpRepository_1.otpRepository.consumeAndDelete({ otpId: otpRow.id });
         return { verified: true };
     },
-    async activateUserAfterSignupOtp(params) {
+    async activatePendingUser(params) {
         const user = await userRepository_1.userRepository.requireByEmail(params.email);
         if (user.status === "ACTIVE")
             return { activated: true };

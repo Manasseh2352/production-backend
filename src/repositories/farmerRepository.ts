@@ -132,6 +132,26 @@ export const farmerRepository = {
     });
   },
 
+  async updateProductImagesById(userId: string, productId: string, images: string[]) {
+    const profile = await this.requireProfileByUserId(userId);
+    const product = await prisma.product.findFirst({
+      where: { id: productId, farmerProfileId: profile.id },
+    });
+
+    if (!product) {
+      const err: any = new Error("Product not found for this farmer");
+      err.status = 404;
+      throw err;
+    }
+
+    return prisma.product.update({
+      where: { id: productId },
+      data: {
+        images: [...new Set(images.filter(Boolean))].slice(0, 10),
+      },
+    });
+  },
+
   // Orders that contain at least one of this farmer's products.
   async listOrdersByUserId(params: { userId: string; limit?: number; offset?: number }) {
     const profile = await this.requireProfileByUserId(params.userId);

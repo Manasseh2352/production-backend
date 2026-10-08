@@ -4,38 +4,53 @@ exports.productService = void 0;
 const productRepository_1 = require("../repositories/productRepository");
 const marketPriceService_1 = require("./marketPriceService");
 const client_1 = require("../prisma/client");
+const productTypes_1 = require("../constants/productTypes");
+const dhlService_1 = require("./dhlService");
 exports.productService = {
     async createFromFarmerUpload(params) {
-        // Find latest market price for this *product type*.
-        // In your current schema, MarketPrice ties to Product row (productId), not productName.
-        // Since a new Product row doesn't exist yet, we map by creating a temporary product row is NOT desired.
-        // Instead, we interpret requirement as: market price table is maintained per product type.
-        // To support that with current schema, we need MarketPrice to reference a product type.
-        // For now, we use a pragmatic approach: require client to provide a `productId` for pricing.
-        // But your task says Product field; schema already has productId.
-        // Therefore we will throw a helpful error if override not provided and no productId is given.
-        // This service expects `unitPriceOverride` OR `pricePerKg` comes from an explicit productId in request.
-        // Since current validators don't include productId, we instead look for a MarketPrice with the latest recordedAt
-        // for ANY productId matching the uploaded productName by scanning existing products of that type.
+        // Resolve a unit price without ever hard-failing the upload. Precedence:
+        //   1. Explicit unitPriceOverride from the farmer.
+        //   2. Latest market price for any product of this type (farmer's own first,
+        //      then any farmer's).
+        //   3. Latest ACTIVE product price of this type across all farmers.
+        //   4. A per-type reference default (last resort).
         let unitPrice = null;
         if (params.unitPriceOverride !== undefined) {
             unitPrice = params.unitPriceOverride;
         }
         else {
-            // Find any existing product for this farmer profile + productName, then use its latest market price.
-            const anyProduct = await client_1.prisma.product.findFirst({
+            // Prefer a market price tied to any existing product of this type,
+            // starting with this farmer's, then falling back to any farmer's.
+            const priceReferenceProduct = (await client_1.prisma.product.findFirst({
                 where: { farmerProfileId: params.farmerProfileId, productName: params.productName },
                 select: { id: true },
                 orderBy: { createdAt: "desc" },
-            });
-            if (!anyProduct) {
-                throw Object.assign(new Error("No existing product found for pricing. Provide unitPriceOverride in request."), { status: 400 });
+            })) ??
+                (await client_1.prisma.product.findFirst({
+                    where: { productName: params.productName },
+                    select: { id: true },
+                    orderBy: { createdAt: "desc" },
+                }));
+            if (priceReferenceProduct) {
+                const current = await marketPriceService_1.marketPriceService.getCurrentPrice({
+                    productId: priceReferenceProduct.id,
+                    region: params.state,
+                });
+                if (current)
+                    unitPrice = Number(current.price);
             }
-            const current = await marketPriceService_1.marketPriceService.getCurrentPrice({ productId: anyProduct.id, region: params.state });
-            if (!current) {
-                throw Object.assign(new Error("No market price available for this product/state."), { status: 400 });
+            // Fall back to the latest published product price of this type.
+            if (unitPrice === null) {
+                const latestByType = await productRepository_1.productRepository.findLatestPriceByType(params.productName);
+                if (latestByType !== null)
+                    unitPrice = Number(latestByType);
             }
-            unitPrice = Number(current.price);
+            // Last resort: a per-type reference default so uploads never fail.
+            if (unitPrice === null) {
+                unitPrice = productTypes_1.DEFAULT_PRICE_PER_KG[params.productName];
+                // eslint-disable-next-line no-console
+                console.warn(`[productService] no market/history price for ${params.productName}; using default ${unitPrice}/kg`);
+            }
         }
         const totalValue = params.quantityKg * unitPrice;
         const createdProduct = await productRepository_1.productRepository.createProduct({
@@ -48,6 +63,7 @@ exports.productService = {
             description: params.description,
             location: params.location,
             destinationCountry: params.destinationCountry,
+            images: params.images,
         });
         // Shipment Consolidation (LCL): allocate this product into a ShipmentGroup by destination country + remaining capacity.
         // Implemented only when destinationCountry is provided.
@@ -116,6 +132,8 @@ exports.productService = {
                     currentWeightKg: newCurrentWeightKg,
                     remainingWeightKg: newRemainingWeightKg,
                     departureDate,
+                    carrier: "DHL",
+                    trackingNumber: dhlService_1.dhlService.generateTrackingNumber(),
                 },
             });
             await tx.shipmentItem.create({
@@ -131,7 +149,7 @@ exports.productService = {
                 },
             });
             return createdProduct;
-        });
+        }, { maxWait: 10000, timeout: 20000 });
     },
 };
 //# sourceMappingURL=productService.js.map

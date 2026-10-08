@@ -16,6 +16,7 @@ exports.placeOrderSchema = zod_1.z.object({
     destinationName: zod_1.z.string().min(1).optional(),
     destinationAddress: zod_1.z.string().min(1).optional(),
     destinationPhone: zod_1.z.string().min(1).optional(),
+    deliveryMethod: zod_1.z.enum(["AIR", "FLIGHT"]).default("AIR"),
     items: zod_1.z.array(placeOrderItemSchema).min(1).max(50),
     // Taxes/shipping can be computed later; for now allow optional overrides.
     currency: zod_1.z.string().min(1).optional().default("USD"),

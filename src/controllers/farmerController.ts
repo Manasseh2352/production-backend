@@ -140,7 +140,14 @@ export const farmerController = {
         location?: string;
         destinationCountry?: string;
         images?: string[];
+        imageUrl?: string;
       };
+
+      const normalizedImages = Array.isArray(body.images)
+        ? body.images.filter(Boolean)
+        : body.imageUrl
+          ? [body.imageUrl]
+          : undefined;
 
       const profile = await farmerService.getProfile(userId);
       if (!profile) {
@@ -156,7 +163,7 @@ export const farmerController = {
         description: body.description,
         location: body.location,
         destinationCountry: body.destinationCountry,
-        images: body.images,
+        images: normalizedImages,
       });
 
       return res.status(201).json({ ok: true, product: created });
@@ -172,6 +179,34 @@ export const farmerController = {
 
       const products = await farmerService.listProducts(userId);
       return res.json({ ok: true, products });
+    } catch (err) {
+      next(err);
+    }
+  },
+
+  async updateProductImages(req: Request, res: Response, next: NextFunction) {
+    try {
+      const userId = req.user?.id;
+      if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+      const productId = Array.isArray(req.params.productId)
+        ? req.params.productId[0]
+        : req.params.productId;
+
+      const body = req.body as { images?: string[]; imageUrl?: string };
+      const images = Array.isArray(body.images)
+        ? body.images
+        : body.imageUrl
+          ? [body.imageUrl]
+          : [];
+
+      const normalized = [...new Set(images.filter(Boolean))].slice(0, 10);
+      if (normalized.length === 0) {
+        return res.status(400).json({ error: "At least one valid image URL is required" });
+      }
+
+      const product = await farmerService.updateProductImages(userId, productId, normalized);
+      return res.json({ ok: true, product });
     } catch (err) {
       next(err);
     }

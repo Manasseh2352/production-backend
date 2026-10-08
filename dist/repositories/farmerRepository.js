@@ -49,13 +49,12 @@ exports.farmerRepository = {
         return profile;
     },
     async getDashboardMetrics(userId) {
-        // total products
-        const totalProducts = await client_1.prisma.product.count({
-            where: { farmerProfileId: (await this.requireProfileByUserId(userId)).id },
-        });
         // total orders/revenue/active shipments based on shipment groups/items belonging to the farmer's products.
         // Join path: FarmerProfile -> Product -> ShipmentItem -> ShipmentGroup -> Order
         const profile = await this.requireProfileByUserId(userId);
+        const totalProducts = await client_1.prisma.product.count({
+            where: { farmerProfileId: profile.id },
+        });
         const totalOrdersAgg = await client_1.prisma.order.aggregate({
             _count: { id: true },
             where: {
@@ -97,6 +96,56 @@ exports.farmerRepository = {
             totalRevenue: totalRevenueAgg._sum.lineTotal ?? 0,
             activeShipments: activeShipmentsAgg,
         };
+    },
+    async listProductsByUserId(userId) {
+        const profile = await this.requireProfileByUserId(userId);
+        return client_1.prisma.product.findMany({
+            where: { farmerProfileId: profile.id },
+            orderBy: { createdAt: "desc" },
+        });
+    },
+    async updateProductImagesById(userId, productId, images) {
+        const profile = await this.requireProfileByUserId(userId);
+        const product = await client_1.prisma.product.findFirst({
+            where: { id: productId, farmerProfileId: profile.id },
+        });
+        if (!product) {
+            const err = new Error("Product not found for this farmer");
+            err.status = 404;
+            throw err;
+        }
+        return client_1.prisma.product.update({
+            where: { id: productId },
+            data: {
+                images: [...new Set(images.filter(Boolean))].slice(0, 10),
+            },
+        });
+    },
+    // Orders that contain at least one of this farmer's products.
+    async listOrdersByUserId(params) {
+        const profile = await this.requireProfileByUserId(params.userId);
+        const limit = params.limit && params.limit > 0 ? Math.min(params.limit, 50) : 20;
+        const offset = params.offset && params.offset >= 0 ? params.offset : 0;
+        return client_1.prisma.order.findMany({
+            where: {
+                shipmentGroups: {
+                    some: {
+                        items: { some: { product: { farmerProfileId: profile.id } } },
+                    },
+                },
+            },
+            include: {
+                payments: true,
+                shipmentGroups: {
+                    include: {
+                        items: { include: { product: true } },
+                    },
+                },
+            },
+            orderBy: { createdAt: "desc" },
+            take: limit,
+            skip: offset,
+        });
     },
 };
 //# sourceMappingURL=farmerRepository.js.map

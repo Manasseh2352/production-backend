@@ -51,5 +51,45 @@ exports.orderController = {
             next(err);
         }
     },
+    async advanceShipmentStatus(req, res, next) {
+        try {
+            const userId = req.user?.id;
+            if (!userId)
+                return res.status(401).json({ error: "Unauthorized" });
+            const params = orderValidator_1.acceptRejectOrderParamsSchema.parse({
+                orderId: Array.isArray(req.params.orderId)
+                    ? req.params.orderId[0]
+                    : req.params.orderId,
+            });
+            const rawStatus = req.body?.status;
+            const validStatuses = ["PACKED", "SHIPPED", "DELIVERED"];
+            if (!rawStatus || !validStatuses.includes(rawStatus)) {
+                return res.status(400).json({ error: "Invalid shipment status" });
+            }
+            const result = await orderService_1.orderService.advanceShipmentStatus(userId, params.orderId, rawStatus);
+            return res.json({ ...result, ok: true });
+        }
+        catch (err) {
+            next(err);
+        }
+    },
+    // Buyer confirms goods received → releases farmer escrow.
+    async confirmReceived(req, res, next) {
+        try {
+            const userId = req.user?.id;
+            if (!userId)
+                return res.status(401).json({ error: "Unauthorized" });
+            const params = orderValidator_1.acceptRejectOrderParamsSchema.parse({
+                orderId: Array.isArray(req.params.orderId)
+                    ? req.params.orderId[0]
+                    : req.params.orderId,
+            });
+            const result = await orderService_1.orderService.confirmReceived(userId, params.orderId);
+            return res.json({ ok: true, ...result });
+        }
+        catch (err) {
+            next(err);
+        }
+    },
 };
 //# sourceMappingURL=orderController.js.map

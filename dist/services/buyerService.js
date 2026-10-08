@@ -2,6 +2,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.buyerService = void 0;
 const buyerRepository_1 = require("../repositories/buyerRepository");
+const productRepository_1 = require("../repositories/productRepository");
+const paymentService_1 = require("./paymentService");
 exports.buyerService = {
     async createProfile(params) {
         return buyerRepository_1.buyerRepository.createProfile(params);
@@ -11,6 +13,9 @@ exports.buyerService = {
             userId: params.userId,
             displayName: params.displayName,
         });
+    },
+    async updateProfileImage(params) {
+        return buyerRepository_1.buyerRepository.updateProfileImage(params);
     },
     async getProfile(userId) {
         await buyerRepository_1.buyerRepository.requireProfileByUserId(userId);
@@ -51,6 +56,28 @@ exports.buyerService = {
     async getOrder(userId, orderId) {
         const profile = await buyerRepository_1.buyerRepository.requireProfileByUserId(userId);
         return buyerRepository_1.buyerRepository.getOrder({ buyerProfileId: profile.id, orderId });
+    },
+    async deleteOrder(userId, orderId) {
+        const profile = await buyerRepository_1.buyerRepository.requireProfileByUserId(userId);
+        return buyerRepository_1.buyerRepository.deleteUnpaidOrder({ buyerProfileId: profile.id, orderId });
+    },
+    // Product catalog (buyer-facing). Browsing does not require a buyer profile,
+    // only a valid session — so we don't resolve a profile here.
+    async listProducts(opts) {
+        return productRepository_1.productRepository.listActiveProducts(opts);
+    },
+    async getProduct(productId) {
+        const product = await productRepository_1.productRepository.getActiveProductById(productId);
+        if (!product) {
+            const err = new Error("Product not found");
+            err.status = 404;
+            throw err;
+        }
+        return product;
+    },
+    // Payment for an order this buyer owns (simulated gateway).
+    async payForOrder(params) {
+        return paymentService_1.paymentService.payForOrder(params);
     },
 };
 //# sourceMappingURL=buyerService.js.map

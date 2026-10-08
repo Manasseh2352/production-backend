@@ -6,6 +6,18 @@ exports.userRepository = {
     async findByEmail(email) {
         return client_1.prisma.user.findUnique({ where: { email } });
     },
+    async findByPhone(phone) {
+        return client_1.prisma.user.findUnique({ where: { phone } });
+    },
+    async findById(id) {
+        return client_1.prisma.user.findUnique({ where: { id } });
+    },
+    async findByIdWithProfiles(id) {
+        return client_1.prisma.user.findUnique({
+            where: { id },
+            include: { buyerProfile: true, farmerProfile: true },
+        });
+    },
     async requireByEmail(email) {
         const user = await this.findByEmail(email);
         if (!user)
@@ -18,7 +30,8 @@ exports.userRepository = {
                 email: params.email,
                 phone: params.phone,
                 passwordHash: params.passwordHash,
-                status: params.status,
+                role: (params.role ?? "BUYER"),
+                status: (params.status ?? "ACTIVE"),
             },
         });
     },

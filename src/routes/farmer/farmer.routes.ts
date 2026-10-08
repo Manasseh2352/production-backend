@@ -37,6 +37,11 @@ farmerRouter.post(
 farmerRouter.get("/dashboard", requireAuth, farmerController.dashboard);
 
 farmerRouter.get("/products", requireAuth, farmerController.listProducts);
+farmerRouter.patch(
+  "/products/:productId/images",
+  requireAuth,
+  farmerController.updateProductImages
+);
 farmerRouter.get("/orders", requireAuth, farmerController.listOrders);
 
 farmerRouter.post(

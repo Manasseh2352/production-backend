@@ -35,6 +35,16 @@ exports.buyerRepository = {
             },
         });
     },
+    async updateProfileImage(params) {
+        await this.requireProfileByUserId(params.userId);
+        return client_1.prisma.buyerProfile.update({
+            where: { userId: params.userId },
+            data: {
+                profileImageUrl: params.profileImageUrl,
+                profileImagePublicId: params.profileImagePublicId,
+            },
+        });
+    },
     async getProfileByUserId(userId) {
         return client_1.prisma.buyerProfile.findUnique({ where: { userId } });
     },
@@ -142,6 +152,25 @@ exports.buyerRepository = {
             throw err;
         }
         return order;
+    },
+    async deleteUnpaidOrder(params) {
+        const order = await client_1.prisma.order.findFirst({
+            where: { buyerProfileId: params.buyerProfileId, id: params.orderId },
+            include: { payments: true },
+        });
+        if (!order) {
+            const err = new Error("Order not found");
+            err.status = 404;
+            throw err;
+        }
+        const hasPaidPayment = order.payments.some((payment) => payment.status === "PAID");
+        if (hasPaidPayment) {
+            const err = new Error("You cannot delete an order that has already been paid for");
+            err.status = 409;
+            throw err;
+        }
+        await client_1.prisma.order.delete({ where: { id: params.orderId } });
+        return { deletedOrderId: params.orderId };
     },
     async getDashboard(params) {
         const profile = await client_1.prisma.buyerProfile.findUnique({ where: { id: params.buyerProfileId } });

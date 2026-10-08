@@ -37,5 +37,14 @@ exports.farmerService = {
     async getDashboard(userId) {
         return farmerRepository_1.farmerRepository.getDashboardMetrics(userId);
     },
+    async listProducts(userId) {
+        return farmerRepository_1.farmerRepository.listProductsByUserId(userId);
+    },
+    async updateProductImages(userId, productId, images) {
+        return farmerRepository_1.farmerRepository.updateProductImagesById(userId, productId, images);
+    },
+    async listOrders(params) {
+        return farmerRepository_1.farmerRepository.listOrdersByUserId(params);
+    },
 };
 //# sourceMappingURL=farmerService.js.map

@@ -5,8 +5,12 @@ const express_1 = require("express");
 const otp_routes_1 = require("./otp.routes");
 const register_routes_1 = require("./register.routes");
 const login_routes_1 = require("./login.routes");
+const refresh_routes_1 = require("./refresh.routes");
+const logout_routes_1 = require("./logout.routes");
 exports.authRouter = (0, express_1.Router)();
 exports.authRouter.use("/register", register_routes_1.registerRouter);
 exports.authRouter.use("/login", login_routes_1.loginRouter);
 exports.authRouter.use("/otp", otp_routes_1.otpRouter);
+exports.authRouter.use("/refresh", refresh_routes_1.refreshRouter);
+exports.authRouter.use("/logout", logout_routes_1.logoutRouter);
 //# sourceMappingURL=index.js.map

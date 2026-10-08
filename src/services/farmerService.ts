@@ -59,6 +59,10 @@ export const farmerService = {
     return farmerRepository.listProductsByUserId(userId);
   },
 
+  async updateProductImages(userId: string, productId: string, images: string[]) {
+    return farmerRepository.updateProductImagesById(userId, productId, images);
+  },
+
   async listOrders(params: { userId: string; limit?: number; offset?: number }) {
     return farmerRepository.listOrdersByUserId(params);
   },

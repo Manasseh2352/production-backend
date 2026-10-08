@@ -42,6 +42,11 @@ const createApp = () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const { adminIndexRouter } = require("./routes/admin/index");
     app.use("/admin", adminIndexRouter);
+    // AI module (price prediction, demand forecasting, profit estimation,
+    // crop recommendation, shipping recommendation)
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { aiIndexRouter } = require("./routes/ai/index");
+    app.use("/ai", aiIndexRouter);
     app.use(notFound_1.notFound);
     app.use(errorHandler_1.errorHandler);
     return app;
